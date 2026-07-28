@@ -278,7 +278,13 @@
       restDefault:90,
       exercises: PRESETS.map(function(p,i){ return {id:"p"+i, name:p.name, cat:p.cat, custom:false}; }),
       workouts: [],
-      sessions: []
+      sessions: [],
+      bodyMetrics: [
+        {id:"weight", name:"Weight", unit:"auto"},
+        {id:"chest", name:"Chest", unit:"cm"},
+        {id:"stomach", name:"Stomach", unit:"cm"}
+      ],
+      bodyLogs: []
     };
   }
 
@@ -290,6 +296,12 @@
       var parsed = JSON.parse(raw);
       if(!parsed.exercises || !parsed.workouts) return defaultState();
       if(!parsed.sessions) parsed.sessions = [];
+      if(!parsed.bodyMetrics) parsed.bodyMetrics = [
+        {id:"weight", name:"Weight", unit:"auto"},
+        {id:"chest", name:"Chest", unit:"cm"},
+        {id:"stomach", name:"Stomach", unit:"cm"}
+      ];
+      if(!parsed.bodyLogs) parsed.bodyLogs = [];
       return parsed;
     }catch(e){ return defaultState(); }
   }
@@ -931,29 +943,47 @@
   });
 
   /* ---------------- PROGRESS VIEW ---------------- */
+  var progressMode = "exercise";
   function renderProgress(){
     var root = document.getElementById("view-progress");
+    var modeSegHtml = '<div class="seg" id="progModeSeg" style="margin-bottom:16px;">'+
+      '<button data-mode="exercise" class="'+(progressMode==="exercise"?"active":"")+'">Exercises</button>'+
+      '<button data-mode="body" class="'+(progressMode==="body"?"active":"")+'">Body</button>'+
+    '</div>'+
+    '<div id="progContent"></div>';
+    root.innerHTML = modeSegHtml;
+    document.getElementById("progModeSeg").addEventListener("click", function(e){
+      var btn = e.target.closest("button");
+      if(!btn) return;
+      progressMode = btn.dataset.mode;
+      renderProgress();
+    });
+    if(progressMode==="exercise") renderExerciseProgress(); else renderBodyProgress();
+  }
+
+  function renderExerciseProgress(){
+    var content = document.getElementById("progContent");
     var loggedIds = new Set();
     state.workouts.forEach(function(w){ w.exercises.forEach(function(ex){ if(loggedSlots(ex).length) loggedIds.add(ex.exerciseId); }); });
     var options = state.exercises.filter(function(e){ return loggedIds.has(e.id); });
     if(options.length===0){
-      root.innerHTML = '<div class="empty"><span class="display">Nothing to chart yet</span>Log a few sets and your progress will show up here.</div>';
+      content.innerHTML = '<div class="empty"><span class="display">Nothing to chart yet</span>Log a few sets and your progress will show up here.</div>';
       return;
     }
-    var currentId = root.dataset.selected || options[0].id;
-    root.innerHTML =
+    var currentId = content.dataset.selected || options[0].id;
+    content.innerHTML =
       '<div class="prog-select"><select id="progSelect">'+
         options.map(function(e){ return '<option value="'+e.id+'"'+(e.id===currentId?' selected':'')+'>'+e.name+'</option>'; }).join("")+
       '</select></div>'+
       '<div id="progBody"></div>';
     document.getElementById("progSelect").addEventListener("change", function(e){
-      root.dataset.selected = e.target.value;
-      renderProgressBody(e.target.value);
+      content.dataset.selected = e.target.value;
+      renderExerciseProgressBody(e.target.value);
     });
-    root.dataset.selected = currentId;
-    renderProgressBody(currentId);
+    content.dataset.selected = currentId;
+    renderExerciseProgressBody(currentId);
   }
-  function renderProgressBody(exId){
+  function renderExerciseProgressBody(exId){
     var points = [];
     state.workouts.slice().reverse().forEach(function(w){
       var ex = w.exercises.find(function(e){ return e.exerciseId===exId; });
@@ -977,25 +1007,116 @@
       '<div class="stat-box"><div class="num mono">'+latest.est1rm+'</div><div class="lbl">Est. 1RM</div></div>'+
     '</div>';
 
-    var w = 100, h = 100, padX = 6, padY = 10;
-    var minW = Math.min.apply(null, points.map(function(p){ return p.weight; }));
-    var maxW = maxWeight;
-    var range = (maxW-minW) || 1;
+    body.innerHTML = statsHtml + buildLineChartSVG(points.map(function(p){ return {date:p.date, value:p.weight}; }), getComputedAccent());
+  }
+  function getComputedAccent(){
+    try{ return getComputedStyle(document.documentElement).getPropertyValue("--red").trim() || "#C8392B"; }
+    catch(e){ return "#C8392B"; }
+  }
+  function buildLineChartSVG(points, colorHex){
+    var w=100, h=100, padX=6, padY=10;
+    var vals = points.map(function(p){ return p.value; });
+    var minV = Math.min.apply(null, vals), maxV = Math.max.apply(null, vals);
+    var range = (maxV-minV) || 1;
     var stepX = points.length>1 ? (w-2*padX)/(points.length-1) : 0;
     function xAt(i){ return padX + i*stepX; }
-    function yAt(val){ return h-padY - ((val-minW)/range)*(h-2*padY); }
-    var pathD = points.map(function(p,i){ return (i===0?"M":"L")+xAt(i).toFixed(1)+","+yAt(p.weight).toFixed(1); }).join(" ");
-    var dots = points.map(function(p,i){
-      return '<circle cx="'+xAt(i).toFixed(1)+'" cy="'+yAt(p.weight).toFixed(1)+'" r="2.2" fill="#C8392B"></circle>';
-    }).join("");
-    var chartHtml = '<div class="chart-wrap"><svg viewBox="0 0 100 100" style="width:100%;height:180px;" preserveAspectRatio="none">'+
-      '<path d="'+pathD+'" fill="none" stroke="#C8392B" stroke-width="1.6" vector-effect="non-scaling-stroke"></path>'+
-      dots+
-    '</svg><div class="day-stats" style="margin-top:6px;display:flex;justify-content:space-between;">'+
-      '<span>'+fmtDate(points[0].date)+'</span><span>'+fmtDate(points[points.length-1].date)+'</span>'+
-    '</div></div>';
+    function yAt(v){ return h-padY - ((v-minV)/range)*(h-2*padY); }
+    var pathD = points.map(function(p,i){ return (i===0?"M":"L")+xAt(i).toFixed(1)+","+yAt(p.value).toFixed(1); }).join(" ");
+    var dots = points.map(function(p,i){ return '<circle cx="'+xAt(i).toFixed(1)+'" cy="'+yAt(p.value).toFixed(1)+'" r="2.2" fill="'+colorHex+'"></circle>'; }).join("");
+    return '<div class="chart-wrap"><svg viewBox="0 0 100 100" style="width:100%;height:160px;" preserveAspectRatio="none">'+
+      '<path d="'+pathD+'" fill="none" stroke="'+colorHex+'" stroke-width="1.6" vector-effect="non-scaling-stroke"></path>'+dots+
+      '</svg><div class="day-stats" style="margin-top:6px;display:flex;justify-content:space-between;">'+
+      '<span>'+fmtDate(points[0].date)+'</span><span>'+fmtDate(points[points.length-1].date)+'</span></div></div>';
+  }
 
-    body.innerHTML = statsHtml + chartHtml;
+  /* ---------------- Body Metrics ---------------- */
+  function metricUnit(m){ return m.unit==="auto" ? state.unit : m.unit; }
+  function bodyLogFor(date){ return state.bodyLogs.find(function(l){ return l.date===date; }); }
+  function latestBodyValue(metricId){
+    var logs = state.bodyLogs.filter(function(l){ return l.values && l.values[metricId]!=null; })
+      .sort(function(a,b){ return b.date.localeCompare(a.date); });
+    return logs.length ? {date:logs[0].date, value:logs[0].values[metricId]} : null;
+  }
+  function renderBodyProgress(){
+    var content = document.getElementById("progContent");
+    var logBtnHtml = '<button class="add-ex-btn primary" id="logMeasureBtn" style="width:100%;margin-bottom:16px;">+ Log Measurements</button>';
+    var cardsHtml = state.bodyMetrics.map(function(m){
+      var series = state.bodyLogs
+        .filter(function(l){ return l.values && l.values[m.id]!=null; })
+        .sort(function(a,b){ return a.date.localeCompare(b.date); })
+        .map(function(l){ return {date:l.date, value:l.values[m.id]}; });
+      var unit = metricUnit(m);
+      if(series.length===0){
+        return '<div class="chart-wrap" style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'+
+          '<span style="font-weight:700;font-size:14px;">'+m.name+'</span><span class="day-stats">No data yet</span></div></div>';
+      }
+      var latest = series[series.length-1];
+      var prev = series.length>1 ? series[series.length-2] : null;
+      var delta = prev!=null ? (latest.value-prev.value) : null;
+      var deltaStr = delta==null ? "" : (delta>0?"+":"")+ (Math.round(delta*10)/10) + " " + unit + " since last";
+      return '<div style="margin-bottom:20px;">'+
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">'+
+          '<span style="font-weight:700;font-size:15px;">'+m.name+'</span>'+
+          '<span class="mono" style="font-size:15px;">'+latest.value+' '+unit+'</span>'+
+        '</div>'+
+        buildLineChartSVG(series, getComputedAccent())+
+        (deltaStr ? '<div class="day-stats" style="margin-top:6px;">'+deltaStr+'</div>' : '')+
+      '</div>';
+    }).join("");
+    content.innerHTML = logBtnHtml + cardsHtml;
+    document.getElementById("logMeasureBtn").addEventListener("click", openLogMeasurements);
+  }
+  function openLogMeasurements(){
+    var modal = document.getElementById("modalRoot");
+    function rowsHtml(){
+      return state.bodyMetrics.map(function(m){
+        var last = latestBodyValue(m.id);
+        var val = last ? last.value : "";
+        return '<div class="add-set-row" style="grid-template-columns:1fr 1fr;align-items:center;">'+
+          '<label style="font-size:14px;">'+m.name+' ('+metricUnit(m)+')</label>'+
+          '<input type="number" inputmode="decimal" data-metric="'+m.id+'" value="'+val+'">'+
+        '</div>';
+      }).join("");
+    }
+    modal.innerHTML =
+      '<div class="overlay" id="measureOverlay"><div class="sheet">'+
+        '<div class="sheet-handle"></div>'+
+        '<h2>Log Measurements</h2>'+
+        '<div id="measureRows">'+rowsHtml()+'</div>'+
+        '<button class="btn secondary" id="addMetricBtn" style="width:100%;margin:12px 0;">+ Add Custom Metric</button>'+
+        '<button class="btn" id="saveMeasureBtn" style="width:100%;">Save</button>'+
+      '</div></div>';
+    var overlay = document.getElementById("measureOverlay");
+    overlay.addEventListener("click", function(e){ if(e.target===overlay) closeModal(); });
+    document.getElementById("addMetricBtn").addEventListener("click", function(){
+      var name = prompt("Metric name (e.g. Waist, Arms, Body Fat %)");
+      if(!name || !name.trim()) return;
+      var unit = prompt("Unit (e.g. cm, in, %)", "cm");
+      if(unit==null) unit = "";
+      state.bodyMetrics.push({id:uid(), name:name.trim(), unit:unit.trim()||"cm"});
+      save();
+      document.getElementById("measureRows").innerHTML = rowsHtml();
+    });
+    document.getElementById("saveMeasureBtn").addEventListener("click", function(){
+      var inputs = document.querySelectorAll('#measureRows input[data-metric]');
+      var values = {};
+      var any = false;
+      inputs.forEach(function(inp){
+        var v = inp.value.trim();
+        if(v!==""){
+          var num = parseFloat(v);
+          if(!isNaN(num)){ values[inp.dataset.metric] = num; any = true; }
+        }
+      });
+      if(!any){ closeModal(); return; }
+      var tk = todayKey();
+      var entry = bodyLogFor(tk);
+      if(!entry){ entry = {date:tk, values:{}}; state.bodyLogs.push(entry); }
+      Object.keys(values).forEach(function(k){ entry.values[k] = values[k]; });
+      save();
+      closeModal();
+      renderBodyProgress();
+    });
   }
 
   /* ---------------- Settings ---------------- */
@@ -1051,7 +1172,9 @@
           restDefault: (typeof parsed.restDefault==="number" && parsed.restDefault>0) ? parsed.restDefault : 90,
           exercises: parsed.exercises,
           workouts: parsed.workouts,
-          sessions: Array.isArray(parsed.sessions) ? parsed.sessions : []
+          sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+          bodyMetrics: Array.isArray(parsed.bodyMetrics) ? parsed.bodyMetrics : defaultState().bodyMetrics,
+          bodyLogs: Array.isArray(parsed.bodyLogs) ? parsed.bodyLogs : []
         };
         save();
         closeModal();
