@@ -562,7 +562,7 @@
       if(pick) applySessionToToday(pick.dataset.id);
     });
     document.getElementById("newSessionBtn").addEventListener("click", function(){
-      builderState = {id:null, name:"", exercises:[]};
+      builderState = {id:null, name:"", exercises:[], applyOnSave:true};
       openSessionBuilder();
     });
   }
@@ -583,9 +583,10 @@
   }
 
   /* ---------------- Session Builder ---------------- */
-  var builderState = {id:null, name:"", exercises:[]};
+  var builderState = {id:null, name:"", exercises:[], applyOnSave:true};
   function openSessionBuilder(){
     var modal = document.getElementById("modalRoot");
+    var isEdit = !builderState.applyOnSave;
     var rows = builderState.exercises.map(function(be, i){
       var info = exerciseById(be.exerciseId) || {name:"Exercise", cat:"Push"};
       return '<div class="builder-row">'+
@@ -600,16 +601,19 @@
     modal.innerHTML =
       '<div class="overlay" id="builderOverlay"><div class="sheet">'+
         '<div class="sheet-handle"></div>'+
-        '<h2>New Session</h2>'+
+        (isEdit ? '<button class="subtle-back" id="builderBack">‹ Back to sessions</button>' : '')+
+        '<h2>'+(isEdit ? 'Edit Session' : 'New Session')+'</h2>'+
         '<div class="search-wrap"><input type="text" id="sessName" placeholder="Session name (e.g. Push)" value="'+builderState.name.replace(/"/g,"&quot;")+'"></div>'+
         (builderState.exercises.length ? '<div class="builder-labels"><span>Exercise</span><span>Sets</span><span>Reps</span><span></span></div>' : '')+
         '<div id="builderRows">'+rows+'</div>'+
         '<button class="add-ex-btn" id="builderAddExBtn" style="width:100%;margin:10px 0 16px;">+ Add Exercise</button>'+
-        '<button class="btn" id="saveSessionBtn" style="width:100%;">Save Session &amp; Start</button>'+
+        '<button class="btn" id="saveSessionBtn" style="width:100%;">'+(isEdit ? 'Save Changes' : 'Save Session &amp; Start')+'</button>'+
       '</div></div>';
 
     var overlay = document.getElementById("builderOverlay");
     overlay.addEventListener("click", function(e){ if(e.target===overlay) closeModal(); });
+    var back = document.getElementById("builderBack");
+    if(back) back.addEventListener("click", openManageSessions);
     document.getElementById("sessName").addEventListener("input", function(e){ builderState.name = e.target.value; });
     document.getElementById("builderRows").addEventListener("click", function(e){
       var rm = e.target.closest('[data-action="b-remove"]');
@@ -633,12 +637,17 @@
         id: builderState.id || uid(),
         name: name,
         exercises: builderState.exercises.map(function(be){ return {exerciseId:be.exerciseId, targetSets:be.sets, targetReps:be.reps}; }),
-        lastUsedDate: todayKey()
+        lastUsedDate: builderState.lastUsedDate || todayKey()
       };
       var existingIdx = state.sessions.findIndex(function(s){ return s.id===session.id; });
       if(existingIdx>=0) state.sessions[existingIdx] = session; else state.sessions.push(session);
       save();
-      applySessionToToday(session.id);
+      if(builderState.applyOnSave){
+        applySessionToToday(session.id);
+      } else {
+        closeModal();
+        openManageSessions();
+      }
     });
   }
 
@@ -948,7 +957,10 @@
       return state.sessions.map(function(s){
         return '<div class="session-pick" data-id="'+s.id+'">'+
           '<div><div class="s-name">'+s.name+'</div><div class="s-meta">'+s.exercises.length+' exercises · last '+fmtShort(s.lastUsedDate)+'</div></div>'+
-          '<button class="slot-remove" data-action="del-session" data-id="'+s.id+'" style="margin-left:auto;">'+
+          '<span class="chev" style="margin-left:auto;">'+
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>'+
+          '</span>'+
+          '<button class="slot-remove" data-action="del-session" data-id="'+s.id+'" style="margin-left:6px;">'+
             '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>'+
           '</button>'+
         '</div>';
@@ -970,6 +982,20 @@
           save();
           document.getElementById("manageRows").innerHTML = rowsHTML();
         }
+        return;
+      }
+      var row = e.target.closest(".session-pick");
+      if(row){
+        var session = state.sessions.find(function(s){ return s.id===row.dataset.id; });
+        if(!session) return;
+        builderState = {
+          id: session.id,
+          name: session.name,
+          exercises: session.exercises.map(function(se){ return {exerciseId:se.exerciseId, sets:se.targetSets, reps:se.targetReps}; }),
+          lastUsedDate: session.lastUsedDate,
+          applyOnSave: false
+        };
+        openSessionBuilder();
       }
     });
   }
